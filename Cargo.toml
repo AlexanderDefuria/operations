@@ -1,0 +1,9 @@
+[package]
+name = "operations"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+num-traits = "0.2.15"
+ndarray = "0.15.6"
+rc-box = "1.2.0"

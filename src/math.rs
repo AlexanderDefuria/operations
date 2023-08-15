@@ -1,17 +1,16 @@
 use crate::operations::Operation;
-use ndarray::Array2;
-use std::any::Any;
-use std::fmt::{Debug, Formatter};
-use std::ops::Add;
+use ndarray::{Array2, ArrayBase, Ix2, OwnedRepr};
+use std::fmt::Debug;
 use std::rc::Rc;
-use Operation::{Divide, Multiply, Negate, Sum};
 
 pub trait EquationMember {
     /// Returns a string representation of the equation
     fn equation_repr(&self) -> String;
 
     /// Returns the numeric value of the equation
-    fn value(&self) -> f64;
+    fn value(&self) -> f64 {
+        f64::NAN
+    }
 
     /// Returns a simplified version of the equation reducing the
     /// number of operations involved
@@ -54,15 +53,13 @@ pub struct Equation {
     right: Operation,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) enum EquationError {
-    DivideByZero,
-    Unknown,
-}
-
 impl EquationMember for Equation {
     fn equation_repr(&self) -> String {
-        format!("{} = {}", self.left.equation_repr(), self.right.equation_repr())
+        format!(
+            "{} = {}",
+            self.left.equation_repr(),
+            self.right.equation_repr()
+        )
     }
 
     fn value(&self) -> f64 {
@@ -130,10 +127,16 @@ impl EquationMember for usize {
     }
 }
 
+impl EquationMember for ArrayBase<OwnedRepr<Operation>, Ix2> {
+    fn equation_repr(&self) -> String {
+        matrix_to_latex(self.clone())
+    }
+}
+
 pub fn matrix_to_latex(matrix: Array2<Operation>) -> String {
     let mut latex_a_matrix = String::new();
     latex_a_matrix.push_str("\\begin{bmatrix}");
-    for row in matrix.genrows() {
+    for row in matrix.rows() {
         for (i, math) in row.iter().enumerate() {
             latex_a_matrix.push_str(&math.latex_string());
             if i != row.len() - 1 {
@@ -151,11 +154,7 @@ where
     T: EquationMember,
 {
     fn from(rc: Rc<T>) -> Self {
-        EquationRepr::new_with_latex(
-            rc.equation_repr(),
-            rc.latex_string(),
-            rc.value(),
-        )
+        EquationRepr::new_with_latex(rc.equation_repr(), rc.latex_string(), rc.value())
     }
 }
 

@@ -1,6 +1,6 @@
-use crate::math::{EquationMember, EquationRepr};
+use crate::math::EquationMember;
 use crate::prelude::*;
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
 use std::ops::Add;
 use std::ptr::hash;
@@ -12,11 +12,12 @@ pub enum Operation {
     Negate(Option<Box<Operation>>),
     Divide(Option<Box<Operation>>, Option<Box<Operation>>),
     Sum(Vec<Operation>),
-    Value(Rc<dyn EquationMember>),
+    Value(f64),
     Text(String),
     Mapping(usize),
+    Equal(Option<Box<Operation>>, Option<Box<Operation>>),
+    Variable(Rc<dyn EquationMember>)
 }
-
 
 impl EquationMember for Operation {
     fn equation_repr(&self) -> String {
@@ -60,6 +61,10 @@ impl EquationMember for Operation {
             Value(a) => a.equation_repr(),
             Mapping(a) => a.equation_repr(),
             Text(a) => a.clone(),
+            Equal(Some(a), Some(b)) => {
+                format!("{} = {}", a.equation_repr(), b.equation_repr())
+            }
+            Variable(a) => a.equation_repr(),
             _ => {
                 panic!("Not implemented");
             }
@@ -85,8 +90,7 @@ impl EquationMember for Operation {
             }
             Divide(Some(a), Some(b)) => a.value() / b.value(),
             Value(a) => a.value(),
-            Mapping(a) => a.value(),
-            Text(_) => 0.0,
+            Mapping(_) | Text(_) | Variable(_) => 1.0,
             _ => {
                 panic!("Not implemented");
             }
@@ -111,61 +115,21 @@ impl EquationMember for Operation {
                         }
                     }
                 });
-                result.push(Value(Rc::new(coefficient)));
+                result.push(Value(coefficient));
                 if result.len() == 1 {
                     return Some(result[0].clone());
                 }
                 return Some(Multiply(result));
-            }
-            Negate(child) => {
-                if let Some(child) = child {
-                    match child.as_ref() {
-                        Negate(second_child) => {
-                            if let Some(second_child) = second_child {
-                                return Some(*second_child.clone());
-                            }
-                        }
-                        Value(a) => return Some(Value(Rc::new(-a.value()))),
-                        _ => {
-                            let result = child.simplify();
-                            if let Some(result) = result {
-                                if let Value(a) = result {
-                                    return Some(Value(Rc::new(-a.value())));
-                                }
-                                if let Negate(Some(x)) = result {
-                                    return Some(*x);
-                                }
-                                return Some(Negate(Some(Box::new(result))));
-                            }
-                        }
-                    }
-                }
-            }
-            Divide(numerator, divisor) => {
-                if let Some(numerator) = numerator {
-                    if let Some(divisor) = divisor {
-                        let simplification: (Option<Operation>, Option<Operation>) =
-                            (numerator.simplify(), divisor.simplify());
-                        if let (Some(Value(a)), Some(Value(b))) =
-                            (&simplification.0, &simplification.1)
-                        {
-                            return Some(Value(Rc::new(a.value() / b.value())));
-                        }
-                        if let (None, None) = simplification {
-                            return None;
-                        }
-                        let a = simplification.0.unwrap_or_else(|| *numerator.clone());
-                        let b = simplification.1.unwrap_or_else(|| *divisor.clone());
-                        return Some(Divide(Some(Box::new(a)), Some(Box::new(b))));
-                    }
-                }
             }
             Sum(list) => {
                 let mut total: f64 = 0.0;
                 let mut result: Vec<Operation> = Vec::new();
                 list.iter().for_each(|x| match x {
                     Value(a) => total += a.value(),
-                    Mapping(_) | Text(_) => result.push(x.clone()),
+                    Mapping(_) | Text(_) | Variable(_) => result.push(x.clone()),
+                    Sum(vec) => {
+                        result.extend(vec.iter().cloned());
+                    }
                     _ => {
                         if let Some(child_simplification) = x.simplify() {
                             total += child_simplification.value();
@@ -174,15 +138,66 @@ impl EquationMember for Operation {
                         }
                     }
                 });
-                result.push(Value(Rc::new(total)));
+                if total != 0.0 {
+                    result.push(Value(total));
+                }
                 if result.len() == 1 {
                     return Some(result[0].clone());
                 }
                 return Some(Sum(result));
             }
-            Value(a) => return Some(Value(a.clone())),
-            Mapping(_) => {}
-            Text(_) => {}
+            Negate(Some(child)) => match child.as_ref() {
+                Negate(second_child) => {
+                    if let Some(second_child) = second_child {
+                        return Some(*second_child.clone());
+                    }
+                }
+                Value(a) => return Some(Value(-a.value())),
+                Sum(vec) => {
+                    let mut result: Vec<Operation> = Vec::new();
+                    for item in vec {
+                        result.push(Negate(Some(Box::new(item.clone()))));
+                    }
+                    return Some(Sum(result));
+                }
+                _ => {
+                    let result = child.simplify();
+                    if let Some(result) = result {
+                        if let Value(a) = result {
+                            return Some(Value(-a.value()));
+                        }
+                        if let Negate(Some(x)) = result {
+                            return Some(*x);
+                        }
+                        return Some(Negate(Some(Box::new(result))));
+                    }
+                }
+            },
+            Divide(Some(numerator), Some(divisor)) => {
+                let simplification: (Option<Operation>, Option<Operation>) =
+                    (numerator.simplify(), divisor.simplify());
+                if let (Some(Value(a)), Some(Value(b))) = (&simplification.0, &simplification.1) {
+                    return Some(Value(a.value() / b.value()));
+                }
+                if let (None, None) = simplification {
+                    return None;
+                }
+                let a = simplification.0.unwrap_or_else(|| *numerator.clone());
+                let b = simplification.1.unwrap_or_else(|| *divisor.clone());
+                return Some(Divide(Some(Box::new(a)), Some(Box::new(b))));
+            }
+            Equal(Some(ls), Some(rs)) => {
+                let simplification: (Option<Operation>, Option<Operation>) =
+                    (ls.simplify(), rs.simplify());
+                if let (None, None) = simplification {
+                    return None;
+                }
+                let a = simplification.0.unwrap_or_else(|| *ls.clone());
+                let b = simplification.1.unwrap_or_else(|| *rs.clone());
+                return Some(Equal(Some(Box::new(a)), Some(Box::new(b))));
+            }
+            Value(_) => return Some(self.clone()),
+            _ => {}
         }
 
         None
@@ -200,16 +215,31 @@ impl EquationMember for Operation {
                 }
                 string
             }
-            Negate(Some(a)) => {
-                format!("-{}", a.latex_string())
-            }
+            Negate(Some(a)) => format!("-{{{}}}", a.latex_string()),
             Sum(vec) => {
-                let mut string = String::new();
-                string.push_str("{");
+                let mut string = String::from("{");
                 for (i, item) in vec.iter().enumerate() {
-                    string.push_str(&item.latex_string());
+                    if let Sum(_) | Multiply(_) = item {
+                        string.push_str("{");
+                    }
+                    if let Negate(Some(a)) = item {
+                        if i != 0 {
+                            string.push_str(&a.latex_string());
+                        } else {
+                            string.push_str(&item.latex_string());
+                        }
+                    } else {
+                        string.push_str(&item.latex_string());
+                    }
                     if i != vec.len() - 1 {
-                        string.push_str(" + ");
+                        if let Some(Negate(_)) = vec.get(i + 1) {
+                            string.push_str(" - ");
+                        } else {
+                            string.push_str(" + ");
+                        }
+                    }
+                    if let Sum(_) | Multiply(_) = item {
+                        string.push_str("}");
                     }
                 }
                 string.push_str("}");
@@ -218,9 +248,17 @@ impl EquationMember for Operation {
             Divide(Some(a), Some(b)) => {
                 format!("\\frac{{{}}}{{{}}}", a.latex_string(), b.latex_string())
             }
+            Equal(Some(a), Some(b)) => format!("{} = {}", a.latex_string(), b.latex_string()),
             Value(a) => a.latex_string(),
             Mapping(a) => a.latex_string(),
-            Text(a) => a.clone(),
+            Variable(a) => a.latex_string(),
+            Text(a) => {
+                if a.starts_with('{') || a.ends_with('}') {
+                    a.clone()
+                } else {
+                    format!("\\texttt{{{}}}", a)
+                }
+            }
             _ => "Not implemented".to_string(),
         }
     }
@@ -237,58 +275,105 @@ impl Operation {
             (Divide(_, _), Divide(_, _)) => true,
             (Mapping(_), Mapping(_)) => true,
             (Value(_) | Text(_) | Mapping(_), Value(_) | Text(_) | Mapping(_)) => true,
+            (Equal(_, _), Equal(_, _)) => true,
             _ => false,
         }
     }
 
-    pub fn compare_entire_structure(&self, rs: &Operation) -> bool {
-        self.compare_structure(rs, 255)
+    pub fn apply_variables(&mut self) -> &mut Self {
+        match self {
+            Sum(vec) => {
+                for item in vec {
+                    item.apply_variables();
+                }
+            }
+            Multiply(vec) => {
+                for item in vec {
+                    item.apply_variables();
+                }
+            }
+            Negate(Some(a)) => {a.apply_variables();},
+            Divide(Some(a), Some(b)) => {
+                a.apply_variables();
+                b.apply_variables();
+            }
+            Equal(Some(a), Some(b)) => {
+                a.apply_variables();
+                b.apply_variables();
+            }
+            Variable(a) => {
+                let value: f64 = a.value();
+                if value.is_finite() {
+                    *self = Value(value);
+                }
+            },
+            _ => {}
+        }
+
+        self
     }
 
-    pub fn compare_structure(&self, rs: &Operation, level: usize) -> bool {
-        if level == 0 {
-            return true;
+    /// Extracts the coefficient of an operation.
+    ///
+    /// NOTE The actual value is most certainly different than this result.
+    pub fn get_coefficient(&self) -> Option<f64> {
+        match self {
+            Value(a) => Some(a.value()),
+            Negate(Some(a)) => a.get_coefficient(),
+            Multiply(list) => {
+                let mut coefficient: f64 = 1.0;
+                for item in list {
+                    if let Value(a) = item {
+                        coefficient *= a.value();
+                    }
+                }
+                Some(coefficient)
+            }
+            Divide(Some(a), Some(b)) => Some(a.value() / b.value()),
+            _ => None,
         }
-        let next_level: usize = level - 1;
+    }
 
+    pub fn print_operation_type(&self) -> &str {
+        match self {
+            Multiply(_) => "Multiply",
+            Negate(_) => "Negate",
+            Sum(_) => "Sum",
+            Divide(_, _) => "Divide",
+            Equal(_, _) => "Equal",
+            Value(_) => "Value",
+            Mapping(_) => "Mapping",
+            Text(_) => "Text",
+            Variable(_) => "Variable"
+        }
+    }
+
+    pub fn compare_structure(&self, rs: &Operation) -> bool {
         match (self, rs) {
             (Sum(ls), Sum(rs)) | (Multiply(ls), Multiply(rs)) => {
                 if ls.len() != rs.len() {
                     return false;
                 }
                 for (l, r) in ls.iter().zip(rs.iter()) {
-                    if !l.compare_structure(r, next_level) {
+                    if !l.compare_structure(r) {
                         return false;
                     }
                 }
                 true
             }
-            (Negate(ls), Negate(rs)) => match (ls, rs) {
-                (Some(ls), Some(rs)) => ls.compare_structure(rs, next_level),
-                _ => false,
-            },
-            (Negate(ls), _) => match ls {
-                Some(ls) => ls.compare_structure(rs, next_level),
-                _ => false,
-            },
-            (_, Negate(rs)) => match rs {
-                Some(rs) => self.compare_structure(rs, next_level),
-                _ => false,
-            },
-            (Divide(lsn, lsd), Divide(rsn, rsd)) => {
-                let denominator: bool = match (lsd, rsd) {
-                    (Some(ls), Some(rs)) => ls.compare_structure(rs, next_level),
-                    _ => false,
-                };
-                let numerator_match: bool = match (lsn, rsn) {
-                    (Some(ls), Some(rs)) => ls.compare_structure(rs, next_level),
-                    _ => false,
-                };
+            (Negate(Some(ls)), Negate(Some(rs))) => ls.compare_structure(rs),
+            (Negate(Some(ls)), _) => ls.compare_structure(rs),
+            (_, Negate(Some(rs))) => rs.compare_structure(self),
+            (Divide(Some(lsn), Some(lsd)), Divide(Some(rsn), Some(rsd))) => {
+                let denominator: bool = lsd.compare_structure(rsd);
+                let numerator_match: bool = lsn.compare_structure(rsn);
                 denominator && numerator_match
             }
+            (_, Mapping(_)) | (Mapping(_), _) => true,
             (a, b) => a.matches(b),
         }
     }
+
 }
 
 impl Debug for Operation {
@@ -337,20 +422,33 @@ impl Add for Operation {
                 b.insert(0, a);
                 Sum(b)
             }
-            (Value(a), Value(b)) => Value(Rc::new(a.value() + b.value())),
+            (Value(a), Value(b)) => Value(a.value() + b.value()),
             (a, b) => Sum(vec![a, b]),
         }
     }
 }
 
+impl Iterator for Operation {
+    type Item = Operation;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            // Sum(list) => list.pop(),
+            _ => None,
+        }
+    }
+}
+
+
 impl num_traits::Zero for Operation {
     fn zero() -> Self {
-        Value(Rc::new(0.0))
+        Value(0.0)
     }
 
     fn is_zero(&self) -> bool {
         match self {
-            Value(a) => a.is_zero(),
+            Variable(a) => a.is_zero(),
+            Value(a) => *a == 0.0,
             _ => false,
         }
     }
@@ -360,40 +458,39 @@ impl num_traits::Zero for Operation {
 mod tests {
     use crate::math::EquationMember;
     use crate::prelude::*;
-    use std::rc::Rc;
 
     #[test]
     fn test_multiplication_simplification() {
-        let a: Operation = Multiply(vec![Value(Rc::new(2.0)), Value(Rc::new(3.0))]);
-        assert_eq!(a.simplify(), Some(Value(Rc::new(6.0))));
+        let a: Operation = Multiply(vec![Value(2.0), Value(3.0)]);
+        assert_eq!(a.simplify(), Some(Value(6.0)));
 
         let a: Operation = Multiply(vec![
-            Value(Rc::new(2.0)),
-            Value(Rc::new(3.0)),
-            Value(Rc::new(4.0)),
+            Value(2.0),
+            Value(3.0),
+            Value(4.0),
         ]);
-        assert_eq!(a.simplify(), Some(Value(Rc::new(24.0))));
+        assert_eq!(a.simplify(), Some(Value(24.0)));
 
         let a: Operation = Multiply(vec![
-            Value(Rc::new(2.0)),
-            Value(Rc::new(3.0)),
+            Value(2.0),
+            Value(3.0),
             Text("x".to_string()),
         ]);
         assert_eq!(
             a.simplify(),
-            Some(Multiply(vec![Value(Rc::new(6.0)), Text("x".to_string())]))
+            Some(Multiply(vec![Value(6.0), Text("x".to_string())]))
         );
 
         let a: Operation = Multiply(vec![
-            Value(Rc::new(3.0)),
-            Value(Rc::new(2.0)),
+            Value(3.0),
+            Value(2.0),
             Text("x".to_string()),
             Text("y".to_string()),
         ]);
         assert_eq!(
             a.simplify(),
             Some(Multiply(vec![
-                Value(Rc::new(6.0)),
+                Value(6.0),
                 Text("x".to_string()),
                 Text("y".to_string())
             ]))
@@ -402,50 +499,50 @@ mod tests {
 
     #[test]
     fn test_negation_simplification() {
-        let a: Operation = Negate(Some(Box::new(Value(Rc::new(2.0)))));
-        assert_eq!(a.simplify(), Some(Value(Rc::new(-2.0))));
+        let a: Operation = Negate(Some(Box::new(Value(2.0))));
+        assert_eq!(a.simplify(), Some(Value(-2.0)));
 
-        let a: Operation = Negate(Some(Box::new(Negate(Some(Box::new(Value(Rc::new(2.0))))))));
-        assert_eq!(a.simplify(), Some(Value(Rc::new(2.0))));
+        let a: Operation = Negate(Some(Box::new(Negate(Some(Box::new(Value(2.0)))))));
+        assert_eq!(a.simplify(), Some(Value(2.0)));
 
         let a: Operation = Negate(Some(Box::new(Multiply(vec![
-            Value(Rc::new(2.0)),
-            Value(Rc::new(3.0)),
+            Value(2.0),
+            Value(3.0),
         ]))));
-        assert_eq!(a.simplify(), Some(Value(Rc::new(-6.0))));
+        assert_eq!(a.simplify(), Some(Value(-6.0)));
 
-        let a: Operation = Negate(Some(Box::new(Multiply(vec![Value(Rc::new(2.0))]))));
-        assert_eq!(a.simplify(), Some(Value(Rc::new(-2.0))));
+        let a: Operation = Negate(Some(Box::new(Multiply(vec![Value(2.0)]))));
+        assert_eq!(a.simplify(), Some(Value(-2.0)));
     }
 
     #[test]
     fn test_division_simplification() {
         let a: Operation = Divide(
-            Some(Box::new(Value(Rc::new(2.0)))),
-            Some(Box::new(Value(Rc::new(3.0)))),
+            Some(Box::new(Value(2.0))),
+            Some(Box::new(Value(3.0))),
         );
-        assert_eq!(a.simplify(), Some(Value(Rc::new(2.0 / 3.0))));
+        assert_eq!(a.simplify(), Some(Value(2.0 / 3.0)));
 
         let a: Operation = Divide(
             Some(Box::new(Text("x".to_string()))),
-            Some(Box::new(Value(Rc::new(3.0)))),
+            Some(Box::new(Value(3.0))),
         );
         assert_eq!(
             a.simplify(),
             Some(Divide(
                 Some(Box::new(Text("x".to_string()))),
-                Some(Box::new(Value(Rc::new(3.0))))
+                Some(Box::new(Value(3.0)))
             ))
         );
 
         let a: Operation = Divide(
-            Some(Box::new(Value(Rc::new(2.0)))),
+            Some(Box::new(Value(2.0))),
             Some(Box::new(Text("x".to_string()))),
         );
         assert_eq!(
             a.simplify(),
             Some(Divide(
-                Some(Box::new(Value(Rc::new(2.0)))),
+                Some(Box::new(Value(2.0))),
                 Some(Box::new(Text("x".to_string())))
             ))
         );
@@ -459,98 +556,142 @@ mod tests {
 
         let a: Operation = Divide(
             Some(Box::new(Negate(Some(Box::new(Multiply(vec![
-                Value(Rc::new(2.0)),
-                Value(Rc::new(3.0)),
+                Value(2.0),
+                Value(3.0),
             ])))))),
             Some(Box::new(Text("x".to_string()))),
         );
         assert_eq!(
             a.simplify(),
             Some(Divide(
-                Some(Box::new(Value(Rc::new(-6.0)))),
+                Some(Box::new(Value(-6.0))),
                 Some(Box::new(Text("x".to_string())))
             ))
         );
 
         let a: Operation = Divide(
             Some(Box::new(Negate(Some(Box::new(Multiply(vec![
-                Value(Rc::new(2.0)),
-                Value(Rc::new(3.0)),
+                Value(2.0),
+                Value(3.0),
             ])))))),
-            Some(Box::new(Negate(Some(Box::new(Value(Rc::new(2.0))))))),
+            Some(Box::new(Negate(Some(Box::new(Value(2.0)))))),
         );
-        assert_eq!(a.simplify(), Some(Value(Rc::new(3.0))));
+        assert_eq!(a.simplify(), Some(Value(3.0)));
 
         let a: Operation = Divide(
             Some(Box::new(Negate(Some(Box::new(Multiply(vec![
                 Text("x".to_string()),
-                Value(Rc::new(2.0)),
+                Value(2.0),
             ])))))),
-            Some(Box::new(Negate(Some(Box::new(Value(Rc::new(2.0))))))),
+            Some(Box::new(Negate(Some(Box::new(Value(2.0)))))),
         );
         assert_eq!(
             a.simplify(),
             Some(Divide(
                 Some(Box::new(Negate(Some(Box::new(Multiply(vec![
                     Text("x".to_string()),
-                    Value(Rc::new(2.0)),
+                    Value(2.0),
                 ])))))),
-                Some(Box::new(Value(Rc::new(-2.0))))
+                Some(Box::new(Value(-2.0)))
             ),)
         );
     }
 
     #[test]
     fn test_summation_simplification() {
-        let a: Operation = Sum(vec![Value(Rc::new(2.0)), Value(Rc::new(3.0))]);
-        assert_eq!(a.simplify(), Some(Value(Rc::new(5.0))));
+        let a: Operation = Sum(vec![Value(2.0), Value(3.0)]);
+        assert_eq!(a.simplify(), Some(Value(5.0)));
 
         let a: Operation = Sum(vec![
-            Value(Rc::new(2.0)),
-            Value(Rc::new(3.0)),
-            Value(Rc::new(4.0)),
+            Value(2.0),
+            Value(3.0),
+            Value(4.0),
         ]);
-        assert_eq!(a.simplify(), Some(Value(Rc::new(9.0))));
+        assert_eq!(a.simplify(), Some(Value(9.0)));
 
         let a: Operation = Sum(vec![
-            Value(Rc::new(2.0)),
-            Value(Rc::new(3.0)),
+            Value(2.0),
+            Value(3.0),
             Text("x".to_string()),
         ]);
         assert_eq!(
             a.simplify(),
-            Some(Sum(vec![Value(Rc::new(5.0)), Text("x".to_string())]))
+            Some(Sum(vec![Value(5.0), Text("x".to_string())]))
         );
 
         let a: Operation = Sum(vec![
-            Value(Rc::new(2.0)),
-            Value(Rc::new(3.0)),
+            Value(2.0),
+            Value(3.0),
             Text("x".to_string()),
             Text("y".to_string()),
         ]);
         assert_eq!(
             a.simplify(),
             Some(Sum(vec![
-                Value(Rc::new(5.0)),
+                Value(5.0),
                 Text("x".to_string()),
                 Text("y".to_string())
             ]))
         );
 
         let a: Operation = Sum(vec![
-            Value(Rc::new(2.0)),
-            Value(Rc::new(3.0)),
+            Value(2.0),
+            Value(3.0),
             Text("x".to_string()),
             Text("y".to_string()),
-            Value(Rc::new(4.0)),
+            Value(4.0),
         ]);
         assert_eq!(
             a.simplify(),
             Some(Sum(vec![
-                Value(Rc::new(9.0)),
+                Value(9.0),
                 Text("x".to_string()),
                 Text("y".to_string())
             ]))
         );
+
+        let a: Operation = Sum(vec![
+            Value(0.0),
+            Text("x".to_string()),
+            Text("y".to_string()),
+        ]);
+        assert_eq!(
+            a.simplify(),
+            Some(Sum(vec![Text("x".to_string()), Text("y".to_string())]))
+        );
+
+        let a: Operation = Sum(vec![Value(0.0), Text("x".to_string())]);
+        assert_eq!(a.simplify(), Some(Text("x".to_string())));
+    }
+
+    #[test]
+    fn test_get_coefficient() {
+        let a: Operation = Divide(
+            Some(Box::new(Text("x".to_string()))),
+            Some(Box::new(Value(3.0))),
+        );
+        assert_eq!(a.get_coefficient(), Some(1.0 / 3.0));
+
+        let a: Operation = Divide(
+            Some(Box::new(Value(2.0))),
+            Some(Box::new(Text("x".to_string()))),
+        );
+        assert_eq!(a.get_coefficient(), Some(2.0));
+
+        let a: Operation = Divide(
+            Some(Box::new(Negate(Some(Box::new(Multiply(vec![
+                Value(2.0),
+                Value(3.0),
+            ])))))),
+            Some(Box::new(Text("x".to_string()))),
+        );
+        assert_eq!(a.get_coefficient(), Some(-6.0));
+
+        let a: Operation = Multiply(vec![
+            Value(2.0),
+            Value(3.0),
+            Text("x".to_string()),
+        ]);
+        assert_eq!(a.get_coefficient(), Some(6.0));
     }
 }

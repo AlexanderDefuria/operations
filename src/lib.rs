@@ -5,7 +5,7 @@ pub mod math;
 pub mod operations;
 
 pub mod prelude {
+    pub use crate::math::*;
     pub use crate::operations::Operation::*;
     pub use crate::operations::*;
-    pub use crate::math::*;
 }

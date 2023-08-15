@@ -1,6 +1,4 @@
-use crate::math::EquationMember;
 use crate::prelude::*;
-use std::rc::Rc;
 
 /// Create a mapping for operation expansion.
 ///
@@ -41,27 +39,22 @@ fn expansions() -> Vec<(Operation, Operation)> {
 /// a mapping to specific components.
 pub(crate) fn create_mapping_index(input: Operation) -> Vec<Operation> {
     let mut output: Vec<Operation> = Vec::new();
-    match input {
+    match input.clone() {
         Multiply(contents) | Sum(contents) => {
             for x in contents {
                 output.extend(create_mapping_index(x));
             }
         }
-        Negate(a) => match a {
-            Some(a) => output.extend(create_mapping_index(*a)),
-            None => {}
+        Negate(Some(a)) => match *a {
+            Value(_) | Text(_) | Mapping(_) | Variable(_) => output.push(input),
+            _ => output.extend(create_mapping_index(*a)),
         },
-        Divide(n, d) => {
-            match n {
-                Some(n) => output.extend(create_mapping_index(*n)),
-                None => {}
-            }
-            match d {
-                Some(d) => output.extend(create_mapping_index(*d)),
-                None => {}
-            }
+        Divide(Some(n), Some(d)) | Equal(Some(n), Some(d)) => {
+            output.extend(create_mapping_index(*n));
+            output.extend(create_mapping_index(*d));
         }
-        Value(_) | Text(_) | Mapping(_) => output.push(input),
+        Value(_) | Text(_) | Mapping(_) | Variable(_) => output.push(input),
+        _ => {}
     }
 
     output
@@ -79,24 +72,21 @@ pub(crate) fn apply_mapping(input: &mut Operation, mappings: Vec<Operation>) -> 
                 *x = apply_mapping(x, mappings.clone());
             });
         }
-        Negate(ref mut a) => match a {
-            Some(ref mut a) => **a = apply_mapping(a, mappings),
-            None => {}
+        Negate(Some(ref mut a)) => match **a {
+            Value(_) | Text(_) => output = Value(0.0),
+            _ => {}
         },
-        Divide(ref mut n, ref mut d) => {
-            match n {
-                Some(ref mut n) => **n = apply_mapping(n, mappings.clone()),
-                None => {}
-            }
-            match d {
-                Some(ref mut d) => **d = apply_mapping(d, mappings),
-                None => {}
-            }
+        Divide(Some(ref mut n), Some(ref mut d)) | Equal(Some(ref mut n), Some(ref mut d)) => {
+            **n = apply_mapping(n, mappings.clone());
+            **d = apply_mapping(d, mappings);
         }
-        Value(_) | Text(_) => output = Value(Rc::new(0.0)),
+        Value(_) | Text(_) => output = Value(0.0),
         Mapping(ref mut index) => {
-            return mappings[*index].clone();
+            if let Some(a) = mappings.get(*index) {
+                return a.clone();
+            }
         }
+        _ => {}
     }
     output
 }
@@ -105,16 +95,25 @@ pub(crate) fn apply_mapping(input: &mut Operation, mappings: Vec<Operation>) -> 
 ///
 /// This function maps the input `Operation` to another operation using the provided `mapping` function.
 /// It also checks for predefined expansions and applies them, resulting in a transformed operation.
-pub(crate) fn map<'a>(input: Operation, mapping: fn() -> Vec<(Operation, Operation)>, depth: usize) -> Operation {
+pub(crate) fn map<'a>(input: Operation, mapping: fn() -> Vec<(Operation, Operation)>) -> Operation {
     let mut output: Operation = input.clone();
-    for (a, b) in expansions().iter() {
-        if output.compare_structure(a, depth) {
+    let mut negate: bool = false;
+    if let Negate(Some(_)) = output.clone() {
+        negate = true;
+    }
+    for (a, b) in mapping().iter() {
+        if output.compare_structure(a) {
             output = b.clone();
             break;
         }
     }
     let mappings: Vec<Operation> = create_mapping_index(input);
-    apply_mapping(&mut output, mappings)
+    let x = apply_mapping(&mut output, mappings);
+    if negate {
+        Negate(Some(Box::new(x)))
+    } else {
+        x
+    }
 }
 
 /// Expand an operation by applying available mappings.
@@ -124,9 +123,8 @@ pub(crate) fn map<'a>(input: Operation, mapping: fn() -> Vec<(Operation, Operati
 /// If no expansion is possible, it returns the original operation wrapped in `Err()`.
 
 pub fn expand(input: Operation) -> Result<Operation, Operation> {
-    let depth: usize = 2;
-    let output: Operation = map(input.clone(), expansions, depth);
-    if output.compare_structure(&input, depth) {
+    let output: Operation = map(input.clone(), expansions);
+    if output.compare_structure(&input) {
         Err(output)
     } else {
         Ok(output)
@@ -135,9 +133,8 @@ pub fn expand(input: Operation) -> Result<Operation, Operation> {
 
 #[cfg(test)]
 mod tests {
-    use crate::mappings::{create_mapping_index, expand, map};
+    use crate::mappings::{create_mapping_index, expand};
     use crate::prelude::*;
-    use std::rc::Rc;
 
     #[test]
     fn test_mapping() {
@@ -175,16 +172,16 @@ mod tests {
                 Text("x".to_string()),
                 Text("y".to_string()),
             ]))),
-            Some(Box::new(Value(Rc::new(8.0)))),
+            Some(Box::new(Value(8.0))),
         );
         let b: Operation = Sum(vec![
             Divide(
                 Some(Box::new(Text("x".to_string()))),
-                Some(Box::new(Value(Rc::new(8.0)))),
+                Some(Box::new(Value(8.0))),
             ),
             Divide(
                 Some(Box::new(Text("y".to_string()))),
-                Some(Box::new(Value(Rc::new(8.0)))),
+                Some(Box::new(Value(8.0))),
             ),
         ]);
         assert_eq!(expand(a), Ok(b));
@@ -195,20 +192,20 @@ mod tests {
                 Text("y".to_string()),
                 Text("z".to_string()),
             ]))),
-            Some(Box::new(Value(Rc::new(8.0)))),
+            Some(Box::new(Value(8.0))),
         );
         let b: Operation = Sum(vec![
             Divide(
                 Some(Box::new(Text("x".to_string()))),
-                Some(Box::new(Value(Rc::new(8.0)))),
+                Some(Box::new(Value(8.0))),
             ),
             Divide(
                 Some(Box::new(Text("y".to_string()))),
-                Some(Box::new(Value(Rc::new(8.0)))),
+                Some(Box::new(Value(8.0))),
             ),
             Divide(
                 Some(Box::new(Text("z".to_string()))),
-                Some(Box::new(Value(Rc::new(8.0)))),
+                Some(Box::new(Value(8.0))),
             ),
         ]);
         assert_eq!(expand(a), Ok(b));
@@ -219,24 +216,42 @@ mod tests {
                 Negate(Some(Box::new(Text("y".to_string())))),
                 Negate(Some(Box::new(Text("z".to_string())))),
             ]))),
-            Some(Box::new(Value(Rc::new(8.0)))),
+            Some(Box::new(Value(8.0))),
         );
         let b: Operation = Sum(vec![
             Divide(
                 Some(Box::new(Negate(Some(Box::new(Text("x".to_string())))))),
-                Some(Box::new(Value(Rc::new(8.0)))),
+                Some(Box::new(Value(8.0))),
             ),
             Divide(
                 Some(Box::new(Negate(Some(Box::new(Text("y".to_string())))))),
-                Some(Box::new(Value(Rc::new(8.0)))),
+                Some(Box::new(Value(8.0))),
             ),
             Divide(
                 Some(Box::new(Negate(Some(Box::new(Text("z".to_string())))))),
-                Some(Box::new(Value(Rc::new(8.0)))),
+                Some(Box::new(Value(8.0))),
             ),
         ]);
         assert_eq!(expand(a), Ok(b));
 
+        let a: Operation = Negate(Some(Box::new(Divide(
+            Some(Box::new(Sum(vec![
+                Text("N1".to_string()),
+                Negate(Some(Box::new(Text("N2".to_string())))),
+            ]))),
+            Some(Box::new(Text("R2".to_string()))),
+        ))));
+        let b: Operation = Negate(Some(Box::new(Sum(vec![
+            Divide(
+                Some(Box::new(Text("N1".to_string()))),
+                Some(Box::new(Text("R2".to_string()))),
+            ),
+            Divide(
+                Some(Box::new(Negate(Some(Box::new(Text("N2".to_string())))))),
+                Some(Box::new(Text("R2".to_string()))),
+            ),
+        ]))));
+        assert_eq!(expand(a), Ok(b));
     }
 
     #[test]
@@ -267,12 +282,12 @@ mod tests {
                 Text("x".to_string()),
                 Text("y".to_string()),
             ]))),
-            Some(Box::new(Value(Rc::new(1.0)))),
+            Some(Box::new(Value(1.0))),
         );
         let b: Vec<Operation> = vec![
             Text("x".to_string()),
             Text("y".to_string()),
-            Value(Rc::new(1.0)),
+            Value(1.0),
         ];
         assert_eq!(create_mapping_index(a), b);
 
@@ -291,7 +306,7 @@ mod tests {
             Some(Box::new(Sum(vec![Mapping(0), Mapping(1)]))),
             Some(Box::new(Mapping(2))),
         );
-        assert!(a.compare_entire_structure(&b));
+        assert!(a.compare_structure(&b));
 
         let b: Operation = Divide(
             Some(Box::new(Sum(vec![
@@ -300,25 +315,25 @@ mod tests {
             ]))),
             Some(Box::new(Text("z".to_string()))),
         );
-        assert!(a.compare_entire_structure(&b));
+        assert!(a.compare_structure(&b));
 
         let b: Operation = Divide(
             Some(Box::new(Sum(vec![
                 Text("x".to_string()),
                 Text("y".to_string()),
             ]))),
-            Some(Box::new(Value(Rc::new(1.0)))),
+            Some(Box::new(Value(1.0))),
         );
-        assert!(a.compare_entire_structure(&b));
+        assert!(a.compare_structure(&b));
 
         let b: Operation = Divide(
             Some(Box::new(Multiply(vec![
                 Text("x".to_string()),
                 Text("y".to_string()),
             ]))),
-            Some(Box::new(Value(Rc::new(2.0)))),
+            Some(Box::new(Value(2.0))),
         );
-        assert!(!a.compare_entire_structure(&b));
+        assert!(!a.compare_structure(&b));
 
         let a: Operation = Multiply(vec![Text("x".to_string()), Text("y".to_string())]);
         let b: Operation = Multiply(vec![
@@ -326,6 +341,30 @@ mod tests {
             Text("y".to_string()),
             Text("z".to_string()),
         ]);
-        assert!(!a.compare_entire_structure(&b));
+        assert!(!a.compare_structure(&b));
+
+        let a: Operation = Negate(Some(Box::new(Divide(
+            Some(Box::new(Text("x".to_string()))),
+            Some(Box::new(Text("y".to_string()))),
+        ))));
+        let b: Operation = Divide(
+            Some(Box::new(Sum(vec![Mapping(0), Mapping(1)]))),
+            Some(Box::new(Mapping(2))),
+        );
+        assert!(!a.compare_structure(&b));
+
+        let a: Operation = Divide(
+            Some(Box::new(Sum(vec![
+                Negate(Some(Box::new(Text("x".to_string())))),
+                Negate(Some(Box::new(Text("y".to_string())))),
+                Negate(Some(Box::new(Text("z".to_string())))),
+            ]))),
+            Some(Box::new(Value(8.0))),
+        );
+        let b: Operation = Divide(
+            Some(Box::new(Sum(vec![Mapping(0), Mapping(1), Mapping(2)]))),
+            Some(Box::new(Mapping(3))),
+        );
+        assert!(a.compare_structure(&b));
     }
 }

@@ -1,5 +1,8 @@
 use crate::operations::Operation;
+use nalgebra::{DMatrix, DVector};
 use ndarray::{Array2, ArrayBase, Ix2, OwnedRepr};
+use rulinalg::matrix::{BaseMatrix, Matrix};
+use rulinalg::vector::Vector;
 use std::fmt::Debug;
 use std::rc::Rc;
 
@@ -132,6 +135,36 @@ impl EquationMember for ArrayBase<OwnedRepr<Operation>, Ix2> {
         matrix_to_latex(self.clone())
     }
 }
+
+impl<T: EquationMember> EquationMember for DVector<T> {
+    fn equation_repr(&self) -> String {
+        let mut output: String = String::new();
+        output.push_str("\\begin{bmatrix}");
+        self.iter().for_each(|x| {
+            output.push_str(&x.latex_string());
+            output.push_str("\\\\");
+        });
+        output.push_str("\\end{bmatrix}");
+        output
+    }
+}
+
+impl<T: EquationMember> EquationMember for DMatrix<T> {
+    fn equation_repr(&self) -> String {
+        let mut output: String = String::new();
+        output.push_str("\\begin{bmatrix}");
+        self.row_iter().for_each(|x| {
+            x.iter().for_each(|y| {
+                output.push_str(&y.equation_repr());
+                output.push_str(" & ");
+            });
+            output.push_str("\\\\");
+        });
+        output.push_str("\\end{bmatrix}");
+        output
+    }
+}
+
 
 pub fn matrix_to_latex(matrix: Array2<Operation>) -> String {
     let mut latex_a_matrix = String::new();

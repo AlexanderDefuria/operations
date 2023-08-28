@@ -8,4 +8,6 @@ description = "Basic algebraic and mathematical expressions for use with dynamic
 [dependencies]
 num-traits = "0.2.15"
 ndarray = "0.15.6"
+rulinalg = "0.4.2"
+nalgebra = "0.32.3"
 rc-box = "1.2.0"

@@ -16,7 +16,7 @@ pub enum Operation {
     Text(String),
     Mapping(usize),
     Equal(Option<Box<Operation>>, Option<Box<Operation>>),
-    Variable(Rc<dyn EquationMember>)
+    Variable(Rc<dyn EquationMember>),
 }
 
 impl EquationMember for Operation {
@@ -90,7 +90,8 @@ impl EquationMember for Operation {
             }
             Divide(Some(a), Some(b)) => a.value() / b.value(),
             Value(a) => a.value(),
-            Mapping(_) | Text(_) | Variable(_) => 1.0,
+            Mapping(_) | Text(_) => 1.0,
+            Variable(a) => a.value(),
             _ => {
                 panic!("Not implemented");
             }
@@ -292,7 +293,9 @@ impl Operation {
                     item.apply_variables();
                 }
             }
-            Negate(Some(a)) => {a.apply_variables();},
+            Negate(Some(a)) => {
+                a.apply_variables();
+            }
             Divide(Some(a), Some(b)) => {
                 a.apply_variables();
                 b.apply_variables();
@@ -306,7 +309,7 @@ impl Operation {
                 if value.is_finite() {
                     *self = Value(value);
                 }
-            },
+            }
             _ => {}
         }
 
@@ -344,7 +347,7 @@ impl Operation {
             Value(_) => "Value",
             Mapping(_) => "Mapping",
             Text(_) => "Text",
-            Variable(_) => "Variable"
+            Variable(_) => "Variable",
         }
     }
 
@@ -373,7 +376,6 @@ impl Operation {
             (a, b) => a.matches(b),
         }
     }
-
 }
 
 impl Debug for Operation {
@@ -439,7 +441,6 @@ impl Iterator for Operation {
     }
 }
 
-
 impl num_traits::Zero for Operation {
     fn zero() -> Self {
         Value(0.0)
@@ -464,18 +465,10 @@ mod tests {
         let a: Operation = Multiply(vec![Value(2.0), Value(3.0)]);
         assert_eq!(a.simplify(), Some(Value(6.0)));
 
-        let a: Operation = Multiply(vec![
-            Value(2.0),
-            Value(3.0),
-            Value(4.0),
-        ]);
+        let a: Operation = Multiply(vec![Value(2.0), Value(3.0), Value(4.0)]);
         assert_eq!(a.simplify(), Some(Value(24.0)));
 
-        let a: Operation = Multiply(vec![
-            Value(2.0),
-            Value(3.0),
-            Text("x".to_string()),
-        ]);
+        let a: Operation = Multiply(vec![Value(2.0), Value(3.0), Text("x".to_string())]);
         assert_eq!(
             a.simplify(),
             Some(Multiply(vec![Value(6.0), Text("x".to_string())]))
@@ -505,10 +498,7 @@ mod tests {
         let a: Operation = Negate(Some(Box::new(Negate(Some(Box::new(Value(2.0)))))));
         assert_eq!(a.simplify(), Some(Value(2.0)));
 
-        let a: Operation = Negate(Some(Box::new(Multiply(vec![
-            Value(2.0),
-            Value(3.0),
-        ]))));
+        let a: Operation = Negate(Some(Box::new(Multiply(vec![Value(2.0), Value(3.0)]))));
         assert_eq!(a.simplify(), Some(Value(-6.0)));
 
         let a: Operation = Negate(Some(Box::new(Multiply(vec![Value(2.0)]))));
@@ -517,10 +507,7 @@ mod tests {
 
     #[test]
     fn test_division_simplification() {
-        let a: Operation = Divide(
-            Some(Box::new(Value(2.0))),
-            Some(Box::new(Value(3.0))),
-        );
+        let a: Operation = Divide(Some(Box::new(Value(2.0))), Some(Box::new(Value(3.0))));
         assert_eq!(a.simplify(), Some(Value(2.0 / 3.0)));
 
         let a: Operation = Divide(
@@ -602,18 +589,10 @@ mod tests {
         let a: Operation = Sum(vec![Value(2.0), Value(3.0)]);
         assert_eq!(a.simplify(), Some(Value(5.0)));
 
-        let a: Operation = Sum(vec![
-            Value(2.0),
-            Value(3.0),
-            Value(4.0),
-        ]);
+        let a: Operation = Sum(vec![Value(2.0), Value(3.0), Value(4.0)]);
         assert_eq!(a.simplify(), Some(Value(9.0)));
 
-        let a: Operation = Sum(vec![
-            Value(2.0),
-            Value(3.0),
-            Text("x".to_string()),
-        ]);
+        let a: Operation = Sum(vec![Value(2.0), Value(3.0), Text("x".to_string())]);
         assert_eq!(
             a.simplify(),
             Some(Sum(vec![Value(5.0), Text("x".to_string())]))
@@ -687,11 +666,7 @@ mod tests {
         );
         assert_eq!(a.get_coefficient(), Some(-6.0));
 
-        let a: Operation = Multiply(vec![
-            Value(2.0),
-            Value(3.0),
-            Text("x".to_string()),
-        ]);
+        let a: Operation = Multiply(vec![Value(2.0), Value(3.0), Text("x".to_string())]);
         assert_eq!(a.get_coefficient(), Some(6.0));
     }
 }

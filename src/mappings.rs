@@ -284,11 +284,7 @@ mod tests {
             ]))),
             Some(Box::new(Value(1.0))),
         );
-        let b: Vec<Operation> = vec![
-            Text("x".to_string()),
-            Text("y".to_string()),
-            Value(1.0),
-        ];
+        let b: Vec<Operation> = vec![Text("x".to_string()), Text("y".to_string()), Value(1.0)];
         assert_eq!(create_mapping_index(a), b);
 
         let a: Operation = Multiply(vec![Text("x".to_string()), Text("y".to_string())]);

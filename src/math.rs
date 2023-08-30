@@ -1,8 +1,6 @@
 use crate::operations::Operation;
 use nalgebra::{DMatrix, DVector};
 use ndarray::{Array2, ArrayBase, Ix2, OwnedRepr};
-use rulinalg::matrix::{BaseMatrix, Matrix};
-use rulinalg::vector::Vector;
 use std::fmt::Debug;
 use std::rc::Rc;
 

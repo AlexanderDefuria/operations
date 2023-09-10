@@ -2,7 +2,7 @@ use crate::math::EquationMember;
 use crate::prelude::*;
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
-use std::ops::Add;
+use std::ops::{Add, Index};
 use std::ptr::hash;
 use std::rc::Rc;
 
@@ -46,7 +46,25 @@ impl EquationMember for Operation {
                 format!("-{}", a.clone().unwrap().equation_repr())
             }
             Divide(Some(a), Some(b)) => {
-                format!("{}/{}", a.equation_repr(), b.equation_repr())
+                let mut numerator = a.equation_repr();
+                let mut denominator = b.equation_repr();
+                match *a.clone() {
+                    Multiply(a)| Sum(a) => {
+                        if a.len() > 1 {
+                            numerator = "{".to_owned() + numerator.as_str() + "}";
+                        }
+                    }
+                    _ => {}
+                }
+                match *b.clone() {
+                    Multiply(a)| Sum(a) => {
+                        if a.len() > 1 {
+                            denominator = "{".to_owned() + denominator.as_str() + "}";
+                        }
+                    }
+                    _ => {}
+                }
+                format!("{}/{}", numerator, denominator)
             }
             Sum(vec) => {
                 let mut string = String::new();
@@ -254,13 +272,9 @@ impl EquationMember for Operation {
             Mapping(a) => a.latex_string(),
             Variable(a) => a.latex_string(),
             Text(a) => {
-                if a.starts_with('{') || a.ends_with('}') {
-                    a.clone()
-                } else {
-                    format!("\\texttt{{{}}}", a)
-                }
+                format!("${}$", a)
             }
-            _ => "Not implemented".to_string(),
+            _ => "$Not implemented$".to_string(),
         }
     }
 }
@@ -279,6 +293,49 @@ impl Operation {
             (Equal(_, _), Equal(_, _)) => true,
             _ => false,
         }
+    }
+
+    pub fn get_variables(&self) -> Vec<Operation> {
+        let mut prelim: Vec<Operation> = Vec::new();
+        match self {
+            Multiply(list) => {
+                for item in list {
+                    prelim.extend(item.get_variables());
+                }
+            }
+            Sum(list) => {
+                for item in list {
+                    prelim.extend(item.get_variables());
+                }
+            }
+            Negate(Some(a)) => {
+                prelim.extend(a.get_variables());
+            }
+            Divide(Some(a), Some(b)) => {
+                prelim.extend(a.get_variables());
+                prelim.extend(b.get_variables());
+            }
+            Equal(Some(a), Some(b)) => {
+                prelim.extend(a.get_variables());
+                prelim.extend(b.get_variables());
+            }
+            Variable(a) => {
+                prelim.push(Variable(a.clone()));
+            }
+            _ => {}
+        }
+
+        // TODO: This function is not complete, its very inefficient.
+        let mut out: Vec<Operation> = Vec::new();
+        'outer: for item in prelim {
+            for x in &out {
+                if x.latex_string() == item.latex_string() {
+                    continue 'outer;
+                }
+            }
+            out.push(item);
+        }
+        out
     }
 
     pub fn apply_variables(&mut self) -> &mut Self {
@@ -316,13 +373,30 @@ impl Operation {
         self
     }
 
+    pub fn contains_variable(&self, rs: Operation) -> bool {
+        match self {
+            Multiply(list) | Sum(list) => list.iter().any(|x| x.contains_variable(rs.clone())),
+            Negate(Some(a)) => a.contains_variable(rs),
+            Divide(Some(a), Some(b)) | Equal(Some(a), Some(b)) => {
+                a.contains_variable(rs.clone()) || b.contains_variable(rs)
+            }
+            _ => self.latex_string() == rs.latex_string(),
+        }
+    }
+
     /// Extracts the coefficient of an operation.
     ///
     /// NOTE The actual value is most certainly different than this result.
     pub fn get_coefficient(&self) -> Option<f64> {
         match self {
             Value(a) => Some(a.value()),
-            Negate(Some(a)) => a.get_coefficient(),
+            Negate(Some(a)) => {
+                if let Some(value) = a.get_coefficient() {
+                    Some(-value)
+                } else {
+                    None
+                }
+            }
             Multiply(list) => {
                 let mut coefficient: f64 = 1.0;
                 for item in list {
@@ -332,7 +406,16 @@ impl Operation {
                 }
                 Some(coefficient)
             }
-            Divide(Some(a), Some(b)) => Some(a.value() / b.value()),
+            Divide(Some(a), Some(b)) => {
+                if a.value().is_finite() {
+                    Some(a.value() / b.value())
+                } else {
+                    match **a {
+                        Negate(_) => Some(-1.0 / b.value()),
+                        _ => Some(1.0 / b.value()),
+                    }
+                }
+            }
             _ => None,
         }
     }
@@ -376,6 +459,19 @@ impl Operation {
             (a, b) => a.matches(b),
         }
     }
+
+    pub fn cleanup(&mut self) {
+        match self {
+            Negate(Some(a)) => match *a.clone() {
+                Negate(Some(b)) => {
+                    *self = *b.clone();
+                }
+                _ => a.cleanup()
+            },
+            Sum(list) => list.iter_mut().for_each(|x| x.cleanup()),
+            _ => {}
+        }
+    }
 }
 
 impl Debug for Operation {
@@ -398,8 +494,6 @@ impl PartialEq for Operation {
         }
     }
 }
-
-impl Eq for Operation {}
 
 impl Hash for Operation {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -430,13 +524,14 @@ impl Add for Operation {
     }
 }
 
-impl Iterator for Operation {
-    type Item = Operation;
+impl Index<usize> for Operation {
+    type Output = Operation;
 
-    fn next(&mut self) -> Option<Self::Item> {
+    fn index(&self, index: usize) -> &Self::Output {
         match self {
-            // Sum(list) => list.pop(),
-            _ => None,
+            Multiply(a) => a.get(index).unwrap(),
+            Sum(a) => a.get(index).unwrap(),
+            _ => panic!("Cannot Index This Operation"),
         }
     }
 }

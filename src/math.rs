@@ -111,7 +111,8 @@ impl EquationRepr {
 
 impl EquationMember for f64 {
     fn equation_repr(&self) -> String {
-        self.to_string()
+        let rounded = (self * 1000.0).round()/1000.0;
+        rounded.to_string()
     }
     fn value(&self) -> f64 {
         *self
@@ -152,9 +153,11 @@ impl<T: EquationMember> EquationMember for DMatrix<T> {
         let mut output: String = String::new();
         output.push_str("\\begin{bmatrix}");
         self.row_iter().for_each(|x| {
-            x.iter().for_each(|y| {
+            x.iter().enumerate().for_each(|(i, y)| {
                 output.push_str(&y.equation_repr());
-                output.push_str(" & ");
+                if i != x.len() - 1 {
+                    output.push_str(" & "); // Don't add & to last element
+                }
             });
             output.push_str("\\\\");
         });
@@ -162,7 +165,6 @@ impl<T: EquationMember> EquationMember for DMatrix<T> {
         output
     }
 }
-
 
 pub fn matrix_to_latex(matrix: Array2<Operation>) -> String {
     let mut latex_a_matrix = String::new();
@@ -188,6 +190,16 @@ where
         EquationRepr::new_with_latex(rc.equation_repr(), rc.latex_string(), rc.value())
     }
 }
+
+impl EquationMember for (String, f64) {
+    fn equation_repr(&self) -> String {
+        self.0.clone()
+    }
+    fn value(&self) -> f64 {
+        self.1
+    }
+}
+
 
 #[cfg(test)]
 mod tests {

@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use crate::math::EquationMember;
 use crate::prelude::*;
 use std::fmt::{Debug, Formatter};
@@ -17,6 +18,8 @@ pub enum Operation {
     Mapping(usize),
     Equal(Option<Box<Operation>>, Option<Box<Operation>>),
     Variable(Rc<dyn EquationMember>),
+    Display(Rc<dyn EquationMember>),
+    Power(Option<Box<Operation>>, Option<Box<Operation>>),
 }
 
 impl EquationMember for Operation {
@@ -49,7 +52,7 @@ impl EquationMember for Operation {
                 let mut numerator = a.equation_repr();
                 let mut denominator = b.equation_repr();
                 match *a.clone() {
-                    Multiply(a)| Sum(a) => {
+                    Multiply(a) | Sum(a) => {
                         if a.len() > 1 {
                             numerator = "{".to_owned() + numerator.as_str() + "}";
                         }
@@ -57,7 +60,7 @@ impl EquationMember for Operation {
                     _ => {}
                 }
                 match *b.clone() {
-                    Multiply(a)| Sum(a) => {
+                    Multiply(a) | Sum(a) => {
                         if a.len() > 1 {
                             denominator = "{".to_owned() + denominator.as_str() + "}";
                         }
@@ -83,6 +86,10 @@ impl EquationMember for Operation {
                 format!("{} = {}", a.equation_repr(), b.equation_repr())
             }
             Variable(a) => a.equation_repr(),
+            Display(a) => a.equation_repr(),
+            Power(Some(a), Some(b)) => {
+                format!("{}^{}", a.equation_repr(), b.equation_repr())
+            }
             _ => {
                 panic!("Not implemented");
             }
@@ -271,9 +278,9 @@ impl EquationMember for Operation {
             Value(a) => a.latex_string(),
             Mapping(a) => a.latex_string(),
             Variable(a) => a.latex_string(),
-            Text(a) => {
-                format!("${}$", a)
-            }
+            Text(a) => format!("${}$", a),
+            Display(a) => a.latex_string(),
+            Power(Some(a), Some(b)) => format!("{}^{{{}}}", a.latex_string(), b.latex_string()),
             _ => "$Not implemented$".to_string(),
         }
     }
@@ -292,6 +299,22 @@ impl Operation {
             (Value(_) | Text(_) | Mapping(_), Value(_) | Text(_) | Mapping(_)) => true,
             (Equal(_, _), Equal(_, _)) => true,
             _ => false,
+        }
+    }
+
+    pub fn get_mut_variables(&self) -> Vec<RefCell<Operation>> {
+        let out = self.get_variables();
+        let mut result: Vec<RefCell<Operation>> = Vec::new();
+        for item in out {
+            result.push(RefCell::new(item));
+        }
+        result
+    }
+
+    pub fn get_child(&self) -> Option<Rc<dyn EquationMember>> {
+        match self {
+            Variable(a) => Some(a.clone()),
+            _ => None
         }
     }
 
@@ -431,6 +454,8 @@ impl Operation {
             Mapping(_) => "Mapping",
             Text(_) => "Text",
             Variable(_) => "Variable",
+            Display(_) => "Display",
+            Power(_, _) => "Power",
         }
     }
 
@@ -466,7 +491,7 @@ impl Operation {
                 Negate(Some(b)) => {
                     *self = *b.clone();
                 }
-                _ => a.cleanup()
+                _ => a.cleanup(),
             },
             Sum(list) => list.iter_mut().for_each(|x| x.cleanup()),
             _ => {}

@@ -111,7 +111,7 @@ impl EquationRepr {
 
 impl EquationMember for f64 {
     fn equation_repr(&self) -> String {
-        let rounded = (self * 1000.0).round()/1000.0;
+        let rounded = (self * 1000.0).round() / 1000.0;
         rounded.to_string()
     }
     fn value(&self) -> f64 {
@@ -199,7 +199,6 @@ impl EquationMember for (String, f64) {
         self.1
     }
 }
-
 
 #[cfg(test)]
 mod tests {

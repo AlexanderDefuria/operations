@@ -1,6 +1,6 @@
-use std::cell::RefCell;
 use crate::math::EquationMember;
 use crate::prelude::*;
+use std::cell::RefCell;
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
 use std::ops::{Add, Index};
@@ -314,7 +314,7 @@ impl Operation {
     pub fn get_child(&self) -> Option<Rc<dyn EquationMember>> {
         match self {
             Variable(a) => Some(a.clone()),
-            _ => None
+            _ => None,
         }
     }
 
@@ -497,6 +497,11 @@ impl Operation {
             _ => {}
         }
     }
+
+    pub fn evaluate(&self) -> Option<f64> {
+        // TODO This `evaluate` function is not complete
+        panic!("Not implemented");
+    }
 }
 
 impl Debug for Operation {
@@ -572,6 +577,12 @@ impl num_traits::Zero for Operation {
             Value(a) => *a == 0.0,
             _ => false,
         }
+    }
+}
+
+impl Default for Operation {
+    fn default() -> Self {
+        Value(0.0)
     }
 }
 
